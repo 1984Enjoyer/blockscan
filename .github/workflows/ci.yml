@@ -30,3 +30,10 @@ jobs:
         with:
           name: BlockScan-debug
           path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Подробности упавших тестов
+        if: failure()
+        run: |
+          for f in app/build/test-results/testDebugUnitTest/*.xml; do
+            grep -A10 "<failure" "$f" | head -120
+          done
