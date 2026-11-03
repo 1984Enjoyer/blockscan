@@ -1,6 +1,8 @@
 package ru.blockscan.app
 
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
@@ -26,7 +28,7 @@ class ScanEngineTest {
     ): Env {
         val clock = { testScheduler.currentTime }
         val checker = IpChecker(api, StartLimiter(clock), { settings }, clock)
-        return Env(store, api, ScanEngine(checker, store, store, { settings }, backgroundScope, clock))
+        return Env(store, api, ScanEngine(checker, store, store, { settings }, CoroutineScope(this.coroutineContext + SupervisorJob()), clock))
     }
 
     @Test fun processesQueueSequentiallyInOrderAndFinishes() = runTest {
