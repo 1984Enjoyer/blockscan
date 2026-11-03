@@ -12,3 +12,4 @@ capture/
 *.jks
 *.keystore
 my.jks
+test-reports/
