@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   release:
+    if: github.actor == 'hackdiaz-dev'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

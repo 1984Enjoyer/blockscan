@@ -51,19 +51,6 @@ gradle :app:testDebugUnitTest      # тесты
 gradle :app:assembleDebug          # APK: app/build/outputs/apk/debug/app-debug.apk
 ```
 
-### Выпуск релиза
-
-1. В настройках репозитория (Settings → Secrets and variables → Actions) заданы секреты:
-   `KEYSTORE_BASE64` (содержимое `.jks` в base64), `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`.
-2. Поставить тег и отправить его:
-   ```
-   git tag v1.0.0
-   git push origin v1.0.0
-   ```
-3. Workflow `Release` соберёт APK, подпишет, проверит подпись и опубликует релиз с файлами `.apk` и `.sha256`.
-
-Файл ключа в репозиторий не попадает (`*.jks` в `.gitignore`).
-
 ## Структура проекта
 
 ```
