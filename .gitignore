@@ -1,0 +1,14 @@
+.gradle/
+build/
+app/build/
+local.properties
+output/
+capture/
+.idea/
+*.iml
+*.apk
+*.aab
+# ключи подписи никогда не коммитим
+*.jks
+*.keystore
+my.jks
