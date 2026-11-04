@@ -1,3 +1,5 @@
-Map boundary data: alt-dmitry/RussianMap (output.js), based on OpenStreetMap and GIS-Lab data.
+Federal district boundary data: timurkanaz/Russia_geojson_OSM (OpenStreetMap).
+Source: https://github.com/timurkanaz/Russia_geojson_OSM
+Crimea and Sevastopol boundary data: alt-dmitry/RussianMap (OpenStreetMap and GIS-Lab).
 Source: https://github.com/alt-dmitry/RussianMap
-The source repository requests attribution. Geometry is simplified and projected for display.
+Geometry is simplified and projected for offline display.

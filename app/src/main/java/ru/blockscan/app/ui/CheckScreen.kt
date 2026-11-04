@@ -22,13 +22,13 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ru.blockscan.app.domain.*
 
-/** Экран живой проверки одного IP. */
+/** Экран живой проверки IP или домена. */
 @Composable
 fun CheckScreen(target: String, onBack: () -> Unit) {
     val vm = containerViewModel(key = "check:$target") { CheckViewModel(it, target) }
     val rec by vm.record.collectAsStateWithLifecycle()
     AppScaffold(
-        title = "Проверка IP", onBack = onBack,
+        title = "Проверка IP или домена", onBack = onBack,
         actions = {
             IconButton(onClick = vm::run, enabled = rec.isTerminal) {
                 Icon(Icons.Default.Refresh, contentDescription = "Перепроверить")
@@ -63,12 +63,67 @@ fun StoredRecordScreen(source: RecordSource, key: String, onBack: () -> Unit) {
 }
 
 private fun LazyListScope.checkBody(rec: CheckRecord) {
-    item(key = "regions") { RegionAvailabilityMap(rec) }
-    item(key = "header") { HeaderCard(rec) }
-    item(key = "static") { StaticCard(rec) }
-    item(key = "dynamic") { DynamicCard(rec) }
-    item(key = "probes") { ProbeListCard(rec) }
-    item(key = "raw") { RawCard(rec) }
+    if (rec.domainCheck) {
+        item(key = "domain-header") { DomainSummaryCard(rec) }
+        items(rec.addressResults, key = { "address:${it.target}" }) { child -> DomainAddressCard(child) }
+    } else {
+        item(key = "regions") { RegionAvailabilityMap(rec) }
+        item(key = "header") { HeaderCard(rec) }
+        item(key = "static") { StaticCard(rec) }
+        item(key = "dynamic") { DynamicCard(rec) }
+        item(key = "probes") { ProbeListCard(rec) }
+        item(key = "raw") { RawCard(rec) }
+    }
+}
+
+@Composable
+private fun DomainSummaryCard(record: CheckRecord) {
+    SectionCard("Проверка домена") {
+        Text(record.target, style = MaterialTheme.typography.headlineSmall, fontFamily = FontFamily.Monospace)
+        OverallChip(record.overall())
+        record.domainResolutionError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        if (record.resolvedAddresses.isNotEmpty()) {
+            val finished = record.addressResults.count { it.isTerminal }
+            Text("Найдено IPv4/IPv6 адресов: ${record.resolvedAddresses.size}")
+            Text("Проверено: $finished из ${record.resolvedAddresses.size}")
+        } else if (!record.isTerminal) {
+            Text("Ищу записи A и AAAA…")
+            LinearProgressIndicator(Modifier.fillMaxWidth())
+        }
+        Text(
+            "DNS-ответ получен с устройства. Для каждого найденного адреса выполнена отдельная проверка.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun DomainAddressCard(record: CheckRecord) {
+    var expanded by rememberSaveable(record.target) { mutableStateOf(false) }
+    ElevatedCard(onClick = { expanded = !expanded }, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(record.target, modifier = Modifier.weight(1f), fontFamily = FontFamily.Monospace,
+                    style = MaterialTheme.typography.titleMedium)
+                OverallChip(record.overall())
+            }
+            Text("Статика: ${record.staticStatus().ru} • Динамика: ${record.dyn.ru}",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (expanded) {
+                HorizontalDivider()
+                RegionAvailabilityMap(record)
+                HeaderCard(record)
+                StaticCard(record)
+                DynamicCard(record)
+                ProbeListCard(record)
+                RawCard(record)
+            } else {
+                Text("Нажмите, чтобы открыть подробности", style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
 }
 
 @Composable

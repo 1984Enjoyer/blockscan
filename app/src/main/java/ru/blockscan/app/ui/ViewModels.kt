@@ -36,7 +36,7 @@ sealed interface ServiceState {
     data class Failed(val message: String) : ServiceState
 }
 
-enum class InputKind { EMPTY, IP, CIDR, INVALID;
+enum class InputKind { EMPTY, IP, DOMAIN, CIDR, INVALID;
     companion object {
         fun of(text: String): InputKind {
             val t = text.trim()
@@ -44,6 +44,7 @@ enum class InputKind { EMPTY, IP, CIDR, INVALID;
                 t.isEmpty() -> EMPTY
                 t.contains('/') -> if (Cidr.parse(t) != null) CIDR else INVALID
                 IpParser.parse(t) != null -> IP
+                ru.blockscan.app.core.DomainParser.canonical(t) != null -> DOMAIN
                 else -> INVALID
             }
         }
@@ -92,7 +93,15 @@ class CheckViewModel(private val c: AppContainer, val target: String) : ViewMode
             var result = CheckRecord(target = target, startedAt = System.currentTimeMillis())
             _record.value = result
             try {
-                result = c.checker.check(target) { update -> result = update; if (runId == thisRun) _record.value = update }
+                val update: suspend (CheckRecord) -> Unit = { value ->
+                    result = value
+                    if (runId == thisRun) _record.value = value
+                }
+                result = if (ru.blockscan.app.core.DomainParser.canonical(target) != null) {
+                    c.checker.checkDomain(target, update)
+                } else {
+                    c.checker.check(target, update)
+                }
                 if (runId == thisRun) _record.value = result
             } finally {
                 if (runId == thisRun) withContext(NonCancellable + Dispatchers.IO) { c.db.addSingle(result) }

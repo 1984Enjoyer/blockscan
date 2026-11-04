@@ -1,12 +1,18 @@
 package ru.blockscan.app.domain
 
+import java.net.InetAddress
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.transformWhile
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withContext
 import ru.blockscan.app.core.IpClassifier
+import ru.blockscan.app.core.DomainParser
+import ru.blockscan.app.core.IpFormat
 import ru.blockscan.app.core.IpParser
 
 /**
@@ -46,6 +52,65 @@ class IpChecker(
     }
 
     internal fun backoffMs(attempt: Int): Long = 1_500L * (1L shl (attempt - 1).coerceIn(0, 5))
+
+    /** Resolves every A/AAAA address using the device resolver, then runs the normal IP check on each. */
+    suspend fun checkDomain(domain: String, onUpdate: suspend (CheckRecord) -> Unit = {}): CheckRecord {
+        val canonical = DomainParser.canonical(domain)
+            ?: return CheckRecord(target = domain, startedAt = clock(), domainCheck = true,
+                domainResolutionError = "Некорректное доменное имя", finishedAt = clock())
+                .also { onUpdate(it) }
+        val startedAt = clock()
+        var parent = CheckRecord(target = canonical, startedAt = startedAt, domainCheck = true, dyn = DynamicStatus.RUNNING)
+        onUpdate(parent)
+        val addresses = try {
+            withContext(Dispatchers.IO) {
+                InetAddress.getAllByName(canonical).mapNotNull { address ->
+                    IpParser.parse(address.hostAddress.orEmpty().substringBefore('%'))?.let { IpFormat.format(it.version, it.value) }
+                }.distinct()
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            val failed = parent.copy(
+                dyn = DynamicStatus.FAILED,
+                domainResolutionError = "Не удалось разрешить домен: ${e.message ?: e.javaClass.simpleName}",
+                finishedAt = clock(),
+            )
+            onUpdate(failed)
+            return failed
+        }
+        if (addresses.isEmpty()) {
+            val failed = parent.copy(dyn = DynamicStatus.FAILED, domainResolutionError = "Для домена не найдены записи A или AAAA", finishedAt = clock())
+            onUpdate(failed)
+            return failed
+        }
+        parent = parent.copy(resolvedAddresses = addresses)
+        onUpdate(parent)
+        val completed = mutableListOf<CheckRecord>()
+        for (address in addresses) {
+            var child = CheckRecord(target = address, startedAt = clock())
+            try {
+                child = check(address) { update ->
+                    child = update
+                    onUpdate(parent.copy(addressResults = completed + child))
+                }
+            } catch (e: CancellationException) {
+                throw e
+            }
+            completed += child
+            parent = parent.copy(addressResults = completed.toList())
+            onUpdate(parent)
+        }
+        val statuses = completed.map { it.dyn }
+        val finalStatus = when {
+            statuses.all { it == DynamicStatus.DONE } -> DynamicStatus.DONE
+            statuses.any { it == DynamicStatus.DONE || it == DynamicStatus.PARTIAL } -> DynamicStatus.PARTIAL
+            else -> DynamicStatus.FAILED
+        }
+        val result = parent.copy(dyn = finalStatus, finishedAt = clock())
+        onUpdate(result)
+        return result
+    }
 
     suspend fun check(target: String, onUpdate: suspend (CheckRecord) -> Unit = {}): CheckRecord {
         val cfg = settings().sanitized()

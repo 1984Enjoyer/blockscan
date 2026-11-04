@@ -6,7 +6,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.produceState
@@ -21,9 +20,7 @@ import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import ru.blockscan.app.domain.CheckRecord
@@ -36,42 +33,60 @@ import java.util.Locale
 import java.util.zip.GZIPInputStream
 
 private const val MAP_WIDTH = 1000f
-private const val MAP_HEIGHT = 330f
+private const val MAP_HEIGHT = 390f
 private val ACCESSIBLE = Color(0xFF36A872)
 private val BLOCKED = Color(0xFFD64B4B)
 private val MIXED = Color(0xFFD69A35)
 private val NO_DATA = Color(0xFF536170)
-private val SPECIAL = Color(0xFFB879D6)
 
-private data class RegionShape(val name: String, val path: Path)
+private data class MapShape(val name: String, val path: Path)
+private data class MapData(
+    val districts: List<MapShape>,
+    val crimea: MapShape?,
+    val districtByRegion: Map<String, String>,
+)
 private data class RegionCount(val accessible: Int, val blocked: Int, val uncertain: Int) {
     val total get() = accessible + blocked + uncertain
-    val color get() = when {
-        accessible > blocked -> ACCESSIBLE
-        blocked > accessible -> BLOCKED
-        accessible > 0 -> MIXED
+    /** Точки показывают смешанный результат, округа — доступность хотя бы из одной точки. */
+    val pointColor get() = when {
+        accessible > 0 && blocked > 0 -> MIXED
+        accessible > 0 -> ACCESSIBLE
+        blocked > 0 -> BLOCKED
+        else -> NO_DATA
+    }
+    val districtColor get() = when {
+        accessible > 0 -> ACCESSIBLE
+        blocked > 0 -> BLOCKED
         else -> NO_DATA
     }
 }
-private data class SpecialCount(val label: String, val count: RegionCount)
 
 private object RegionMapAsset {
-    @Volatile private var cached: List<RegionShape>? = null
+    @Volatile private var cached: MapData? = null
 
-    fun load(context: Context): List<RegionShape> = cached ?: synchronized(this) {
-        cached ?: context.assets.open("russia-regions.map.gz").use { compressed ->
-            GZIPInputStream(compressed).bufferedReader(Charsets.UTF_8).use { it.readLines() }
-                .mapNotNull(::parseShape)
-                .also { cached = it }
+    fun load(context: Context): MapData = cached ?: synchronized(this) {
+        cached ?: context.assets.open("russia-federal-districts.mapdata").use { compressed ->
+            val districts = mutableListOf<MapShape>()
+            var crimea: MapShape? = null
+            val mapping = mutableMapOf<String, String>()
+            GZIPInputStream(compressed).bufferedReader(Charsets.UTF_8).useLines { lines ->
+                lines.forEach { line ->
+                    val columns = line.split('\t', limit = 3)
+                    when (columns.firstOrNull()) {
+                        "D" -> if (columns.size == 3) parseShape(columns[1], columns[2])?.let(districts::add)
+                        "C" -> if (columns.size == 3) crimea = parseShape(columns[1], columns[2])
+                        "R" -> if (columns.size == 3) mapping[normalizeRegion(columns[1])] = columns[2]
+                    }
+                }
+            }
+            MapData(districts, crimea, mapping).also { cached = it }
         }
     }
 
-    private fun parseShape(line: String): RegionShape? {
-        val columns = line.split('\t', limit = 2)
-        if (columns.size != 2) return null
+    private fun parseShape(name: String, encoded: String): MapShape {
         val path = Path().apply {
             fillType = PathFillType.EvenOdd
-            columns[1].split('|').forEach { ring ->
+            encoded.split('|').forEach { ring ->
                 val points = ring.split(';')
                 if (points.size < 4) return@forEach
                 points.forEachIndexed { index, point ->
@@ -84,32 +99,25 @@ private object RegionMapAsset {
                 close()
             }
         }
-        return RegionShape(columns[0], path)
+        return MapShape(name, path)
     }
 }
 
 @Composable
 internal fun RegionAvailabilityMap(record: CheckRecord) {
     val context = LocalContext.current.applicationContext
-    val shapes = produceState<List<RegionShape>>(emptyList(), context) {
+    val map = produceState<MapData?>(null, context) {
         value = withContext(Dispatchers.IO) { RegionMapAsset.load(context) }
     }.value
     val isCdn = record.static()?.isCdn == true
+    val districts = map?.districts.orEmpty()
+    val probesByDistrict = mutableMapOf<String, MutableList<ProbeResult>>()
+    val crimeaProbes = mutableListOf<ProbeResult>()
+    val specialProbes = mutableMapOf("ДНР" to mutableListOf<ProbeResult>(), "ЛНР" to mutableListOf<ProbeResult>())
     val specialAliases = mapOf(
-        "донецкая народная республика" to "ДНР",
-        "днр" to "ДНР",
-        "луганская народная республика" to "ЛНР",
-        "лнр" to "ЛНР",
+        "донецкаянароднаяреспублика" to "ДНР", "днр" to "ДНР",
+        "луганскаянароднаяреспублика" to "ЛНР", "лнр" to "ЛНР",
     )
-    val specialCounts = linkedMapOf<String, MutableList<ProbeResult>>()
-    val byRegion = linkedMapOf<String, MutableList<ProbeResult>>()
-    record.probes().forEach { probe ->
-        val name = probe.region?.trim().orEmpty()
-        if (name.isBlank()) return@forEach
-        val special = specialAliases.entries.firstOrNull { normalizeRegion(name) == normalizeRegion(it.key) }?.value
-        if (special != null) specialCounts.getOrPut(special) { mutableListOf() } += probe
-        else byRegion.getOrPut(normalizeRegion(name)) { mutableListOf() } += probe
-    }
     val aliases = mapOf(
         normalizeRegion("Москва") to normalizeRegion("Город Москва столица Российской Федерации город федерального значения"),
         normalizeRegion("Санкт-Петербург") to normalizeRegion("Город Санкт-Петербург город федерального значения"),
@@ -122,25 +130,31 @@ internal fun RegionAvailabilityMap(record: CheckRecord) {
         normalizeRegion("Ханты-Мансийский автономный округ — Югра") to normalizeRegion("Ханты-Мансийский АО"),
         normalizeRegion("Ямало-Ненецкий автономный округ") to normalizeRegion("Ямало-Ненецкий АО"),
     )
-    val shapeKeys = shapes.associateBy { normalizeRegion(it.name) }
-    val resolved = linkedMapOf<String, MutableList<ProbeResult>>()
-    byRegion.forEach { (key, probes) ->
-        val canonical = aliases[key] ?: key
-        resolved.getOrPut(canonical) { mutableListOf() }.addAll(probes)
+    record.probes().forEach { probe ->
+        val normalized = normalizeRegion(probe.region.orEmpty())
+        val special = specialAliases[normalized]
+        when {
+            special != null -> specialProbes.getValue(special).add(probe)
+            normalized == normalizeRegion("Крым") || normalized == normalizeRegion("Республика Крым") ||
+                normalized == normalizeRegion("Севастополь") || normalized == normalizeRegion("Город федерального значения Севастополь") -> crimeaProbes.add(probe)
+            else -> {
+                val key = aliases[normalized] ?: normalized
+                map?.districtByRegion?.get(key)?.let { district -> probesByDistrict.getOrPut(district) { mutableListOf() }.add(probe) }
+            }
+        }
     }
-    val counts = resolved.mapValues { (_, probes) -> countRegion(probes, isCdn) }
-    val special = specialCounts.map { (label, probes) -> SpecialCount(label, countRegion(probes, isCdn)) }
-    val matched = shapes.associateWith { shape -> counts[normalizeRegion(shape.name)] }
-    val mappedCounts = matched.values.filterNotNull()
-    val availableRegions = mappedCounts.count { it.accessible > it.blocked }
-    val blockedRegions = mappedCounts.count { it.blocked > it.accessible }
-    val mixedRegions = mappedCounts.count { it.accessible > 0 && it.accessible == it.blocked }
-    val noDataRegions = shapes.size - mappedCounts.count { it.accessible + it.blocked > 0 }
-    val specialMap = special.associateBy { it.label }
+    // Имена округов в GeoJSON и таблице субъектов различаются регистром.
+    val counts = probesByDistrict.mapKeys { normalizeRegion(it.key) }.mapValues { countRegion(it.value, isCdn) }
+    val crimeaCount = countRegion(crimeaProbes, isCdn)
+    val specialCounts = specialProbes.mapValues { countRegion(it.value, isCdn) }
+    val districtStates = districts.map { it to counts[normalizeRegion(it.name)] }
+    val available = districtStates.count { it.second?.accessible?.let { n -> n > 0 } == true }
+    val blocked = districtStates.count { it.second?.let { c -> c.accessible == 0 && c.blocked > 0 } == true }
+    val noData = districts.size - districtStates.count { it.second?.let { c -> c.accessible + c.blocked > 0 } == true }
 
-    SectionCard("Доступность по регионам") {
+    SectionCard("Доступность по федеральным округам") {
         Text(
-            "Цвет региона определяется большинством уверенных ответов сканеров. Неясные ответы не учитываются в голосовании.",
+            "Округ зелёный, если хотя бы один сканер в нём достучался; красный, если доступных ответов нет, но есть блокировки. Неясные ответы не учитываются.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -150,65 +164,35 @@ internal fun RegionAvailabilityMap(record: CheckRecord) {
                 val sx = size.width / MAP_WIDTH
                 val sy = size.height / MAP_HEIGHT
                 withTransform({ scale(sx, sy, Offset.Zero) }) {
-                    matched.forEach { (shape, state) ->
-                        drawPath(shape.path, state?.color ?: NO_DATA, alpha = if (state == null) 0.55f else 1f)
+                    districtStates.forEach { (shape, state) ->
+                        drawPath(shape.path, state?.districtColor ?: NO_DATA, alpha = if (state == null) 0.55f else 1f)
                         drawPath(shape.path, Color(0xFF15212A), style = Stroke(width = 1.1f / sx.coerceAtLeast(0.1f)))
                     }
-                    // ДНР/ЛНР в исходном наборе границ не представлены. Эти две метки показывают
-                    // только примерное расположение, а не границы или принадлежность территории.
-                    listOf(Offset(106f, 274f), Offset(115f, 265f)).forEach { point ->
-                        drawCircle(SPECIAL.copy(alpha = 0.35f), radius = 10f, center = point)
-                        drawCircle(SPECIAL, radius = 5f, center = point, style = Stroke(width = 2f))
+                    map?.crimea?.let { shape ->
+                        drawPath(shape.path, crimeaCount.districtColor)
+                        drawPath(shape.path, Color(0xFF15212A), style = Stroke(width = 1.1f / sx.coerceAtLeast(0.1f)))
                     }
-                }
-            }
-            listOf("ДНР" to 0.75f, "ЛНР" to 0.69f).forEach { (name, y) ->
-                val count = specialMap[name]?.count
-                Surface(
-                    modifier = Modifier.offset { IntOffset((maxWidth * 0.13f).roundToPx(), (mapHeight * y).roundToPx()) },
-                    shape = RoundedCornerShape(6.dp),
-                    color = (count?.color ?: SPECIAL).copy(alpha = 0.94f),
-                    contentColor = Color.White,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, SPECIAL),
-                ) {
-                    Text(
-                        text = if (count == null) name else "$name ${count.accessible}/${count.total}",
-                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
-                        fontSize = 9.sp,
-                        lineHeight = 10.sp,
-                    )
+                    // Приблизительные точки смещены влево от исходного положения, чтобы не закрывать контур округа.
+                    listOf(Offset(82f, 315f) to "ДНР", Offset(96f, 304f) to "ЛНР").forEach { (point, name) ->
+                        val color = specialCounts[name]?.pointColor ?: NO_DATA
+                        drawCircle(color.copy(alpha = 0.35f), radius = 10f, center = point)
+                        drawCircle(color, radius = 5f, center = point)
+                    }
                 }
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            LegendDot(ACCESSIBLE, "Доступно $availableRegions")
-            LegendDot(BLOCKED, "Блок $blockedRegions")
-            LegendDot(MIXED, "Смешанно $mixedRegions")
-            LegendDot(NO_DATA, "Нет данных $noDataRegions")
-        }
-        if (special.isNotEmpty()) {
-            Text(
-                "ДНР/ЛНР — отдельная отметка спорного статуса; они не включены в раскраску субъектов РФ. Метки показывают примерное расположение, не границы.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        } else {
-            Text(
-                "ДНР/ЛНР отмечены отдельно (примерное расположение); их границы не входят в набор карты.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        val unmatched = resolved.keys.filter { it !in shapeKeys.keys }
-        if (unmatched.isNotEmpty()) {
-            Text(
-                "Нет границ карты для: ${unmatched.joinToString { key -> byRegion.keys.firstOrNull { normalizeRegion(it) == key } ?: key }}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            LegendDot(ACCESSIBLE, "Доступно $available")
+            LegendDot(BLOCKED, "Блок $blocked")
+            LegendDot(NO_DATA, "Нет данных $noData")
         }
         Text(
-            "Границы: OpenStreetMap и GIS-Lab, обработка alt-dmitry/RussianMap.",
+            "ДНР и ЛНР отмечены точками: зелёная — доступно, красная — блокировка, жёлтая — смешанные ответы. Из-за спорного статуса и отсутствия на OpenStreetMap они не нанесены на карту.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            "Границы округов: OpenStreetMap, обработка timurkanaz/Russia_geojson_OSM. Крым и Севастополь: alt-dmitry/RussianMap (OSM/GIS-Lab).",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

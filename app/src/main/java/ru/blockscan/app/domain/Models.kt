@@ -79,11 +79,16 @@ data class CheckRecord(
     val dynStartedAt: Long? = null,
     val dynDoneAt: Long? = null,
     val finishedAt: Long? = null,
+    /** A domain parent groups a resolver snapshot and the individual checks for every A/AAAA address. */
+    val domainCheck: Boolean = false,
+    val resolvedAddresses: List<String> = emptyList(),
+    val addressResults: List<CheckRecord> = emptyList(),
+    val domainResolutionError: String? = null,
 ) {
     /** Запись закончена: статика получена (или провалилась), динамика не в процессе. */
     val isTerminal: Boolean
-        get() = (staticRaw != null || staticError != null) &&
-            dyn != DynamicStatus.QUEUED && dyn != DynamicStatus.RUNNING
+        get() = if (domainCheck) finishedAt != null else
+            (staticRaw != null || staticError != null) && dyn != DynamicStatus.QUEUED && dyn != DynamicStatus.RUNNING
 }
 
 data class CdnHit(val name: String, val cidr: String?, val region: String?)

@@ -1,6 +1,7 @@
 package ru.blockscan.app.core
 
 import java.math.BigInteger
+import java.net.IDN
 
 enum class IpVersion(val bits: Int) { V4(32), V6(128) }
 
@@ -119,6 +120,20 @@ object IpParser {
         if (g.isEmpty() || g.length > 4) return null
         if (!g.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }) return null
         return g.toInt(16)
+    }
+}
+
+/** Strict public DNS host name parser used for the single-target domain check. */
+object DomainParser {
+    fun canonical(text: String): String? {
+        val input = text.trim().removeSuffix(".")
+        if (input.isEmpty() || input.length > 253 || input.any { it.isWhitespace() } ||
+            input.contains('/') || input.contains(':') || input.contains('@')) return null
+        val ascii = runCatching { IDN.toASCII(input, IDN.USE_STD3_ASCII_RULES).lowercase() }.getOrNull() ?: return null
+        val labels = ascii.split('.')
+        if (labels.size < 2 || labels.any { it.isEmpty() || it.length > 63 }) return null
+        if (labels.last().none(Char::isLetter)) return null
+        return ascii.takeIf { labels.all { label -> label.first().isLetterOrDigit() && label.last().isLetterOrDigit() } }
     }
 }
 
