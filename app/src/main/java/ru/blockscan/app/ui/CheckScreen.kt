@@ -63,6 +63,7 @@ fun StoredRecordScreen(source: RecordSource, key: String, onBack: () -> Unit) {
 }
 
 private fun LazyListScope.checkBody(rec: CheckRecord) {
+    item(key = "regions") { RegionAvailabilityMap(rec) }
     item(key = "header") { HeaderCard(rec) }
     item(key = "static") { StaticCard(rec) }
     item(key = "dynamic") { DynamicCard(rec) }

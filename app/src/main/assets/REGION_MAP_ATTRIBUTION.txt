@@ -1,0 +1,3 @@
+Map boundary data: alt-dmitry/RussianMap (output.js), based on OpenStreetMap and GIS-Lab data.
+Source: https://github.com/alt-dmitry/RussianMap
+The source repository requests attribution. Geometry is simplified and projected for display.
