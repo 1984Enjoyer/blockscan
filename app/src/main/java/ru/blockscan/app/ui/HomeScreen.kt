@@ -76,7 +76,7 @@ fun HomeScreen(
                     when (kind) {
                         InputKind.INVALID -> Text("Некорректный IP, домен или CIDR")
                         InputKind.CIDR -> Text("Подсеть: каждый адрес проверяется отдельно")
-                        InputKind.DOMAIN -> Text("Домен разрешается в IPv4 и IPv6 адреса; проверяется каждый адрес")
+                        InputKind.DOMAIN -> Text("Домен проверяется целиком; массовое сканирование доступно только для IP и CIDR")
                         else -> Text("Например 1.1.1.1 или 203.0.113.0/24")
                     }
                 },

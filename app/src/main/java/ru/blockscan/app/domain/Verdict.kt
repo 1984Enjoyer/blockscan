@@ -64,15 +64,6 @@ fun CheckRecord.probes(): List<ProbeResult> =
     probeRaw.mapNotNull { runCatching { ProbeParser.parseResult(it) }.getOrNull() }
 
 fun CheckRecord.summary(): DynamicSummary? {
-    if (domainCheck) {
-        val parts = addressResults.mapNotNull { it.summary() }
-        if (parts.isEmpty()) return null
-        val counts = LinkedHashMap<Verdict, Int>()
-        parts.forEach { part -> part.counts.forEach { (verdict, count) -> counts[verdict] = (counts[verdict] ?: 0) + count } }
-        val winner = Verdict.entries.firstOrNull { (counts[it] ?: 0) == counts.values.maxOrNull() }
-            ?.takeUnless { it == Verdict.UNCERTAIN }
-        return DynamicSummary(winner, counts, parts.sumOf { it.blockingProbes }, parts.sumOf { it.totalProbes })
-    }
     val p = probes()
     if (p.isEmpty()) return null
     return summarize(p, static()?.isCdn == true)
@@ -94,12 +85,6 @@ fun CheckRecord.staticStatus(): StaticStatus {
  * COMPLETE возможен только после события done от сканеров.
  */
 fun CheckRecord.overall(): Overall {
-    if (domainCheck) {
-        if (!isTerminal) return Overall.DYNAMIC_PENDING
-        if (domainResolutionError != null || addressResults.isEmpty()) return Overall.ERROR
-        val outcomes = addressResults.map { it.overall() }.distinct()
-        return outcomes.singleOrNull() ?: Overall.DYNAMIC_PARTIAL
-    }
     val st = staticStatus()
     if (st == StaticStatus.ERROR) return Overall.ERROR
     if (st == StaticStatus.PENDING) return Overall.UNKNOWN
@@ -125,9 +110,7 @@ fun CheckRecord.overall(): Overall {
 }
 
 /** На чём основан итог: нужен, чтобы «Заблокирован» по спискам не выглядел как подтверждённая недоступность. */
-fun CheckRecord.basis(): String = if (domainCheck) {
-    "по результатам отдельных проверок IP-адресов домена"
-} else when (dyn) {
+fun CheckRecord.basis(): String = when (dyn) {
     DynamicStatus.DONE -> "по ответам сканеров"
     DynamicStatus.PARTIAL, DynamicStatus.RUNNING -> "по спискам и неполным ответам сканеров"
     else -> "только по спискам, динамическая проверка не выполнена"
@@ -135,8 +118,6 @@ fun CheckRecord.basis(): String = if (domainCheck) {
 
 fun CheckRecord.completionLabel(): String = when {
     !isTerminal -> "Прервано"
-    domainCheck && domainResolutionError != null -> "Ошибка DNS"
-    domainCheck && dyn == DynamicStatus.PARTIAL -> "Частично"
     staticError != null -> "Ошибка"
     dyn == DynamicStatus.DONE -> "Завершено"
     dyn == DynamicStatus.PARTIAL -> "Частично"

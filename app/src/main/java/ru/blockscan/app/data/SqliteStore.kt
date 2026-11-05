@@ -240,7 +240,6 @@ class SqliteStore(context: Context) : SQLiteOpenHelper(context, "blockscan.db", 
         val st = rec.static()
         val summary = buildString {
             append(overall.ru)
-            if (rec.domainCheck) append(" • IP-адресов: ").append(rec.resolvedAddresses.size)
             st?.asn?.let { append(" • ").append(it) }
             if (rec.dyn == DynamicStatus.DONE) rec.summary()?.let { append(" • сканеров: ${it.totalProbes}") }
         }

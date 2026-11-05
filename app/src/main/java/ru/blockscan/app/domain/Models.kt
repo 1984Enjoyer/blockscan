@@ -79,16 +79,11 @@ data class CheckRecord(
     val dynStartedAt: Long? = null,
     val dynDoneAt: Long? = null,
     val finishedAt: Long? = null,
-    /** A domain parent groups a resolver snapshot and the individual checks for every A/AAAA address. */
-    val domainCheck: Boolean = false,
-    val resolvedAddresses: List<String> = emptyList(),
-    val addressResults: List<CheckRecord> = emptyList(),
-    val domainResolutionError: String? = null,
 ) {
     /** Запись закончена: статика получена (или провалилась), динамика не в процессе. */
     val isTerminal: Boolean
-        get() = if (domainCheck) finishedAt != null else
-            (staticRaw != null || staticError != null) && dyn != DynamicStatus.QUEUED && dyn != DynamicStatus.RUNNING
+        get() = (staticRaw != null || staticError != null) &&
+            dyn != DynamicStatus.QUEUED && dyn != DynamicStatus.RUNNING
 }
 
 data class CdnHit(val name: String, val cidr: String?, val region: String?)
@@ -145,6 +140,36 @@ data class ProbeResult(
     val hostResultsSize: Int?,
     val targetHop: Int?,
     val dpiHop: Int?,
+    val dns: ProbeDnsInfo? = null,
+    val hostResults: List<ProbeHostResult> = emptyList(),
+)
+
+data class ProbeDnsInfo(
+    val spoofingDetected: Boolean?,
+    val suspiciousProviderCount: Int?,
+    val verdictThreshold: Int?,
+    val samplesPerProtocol: Int?,
+    val observations: List<ProbeDnsObservation>,
+)
+
+data class ProbeDnsObservation(
+    val provider: String?,
+    val protocol: String?,
+    val suspectedSpoofing: Boolean?,
+    val responseCodes: List<String>,
+    val ipv4Count: Int?,
+    val ipv6Count: Int?,
+    /** Raw API values such as Answer, NoRecords, Error; deliberately not interpreted. */
+    val outcomeType: String?,
+    val addresses: List<String>,
+    val errorMessage: String?,
+)
+
+data class ProbeHostResult(
+    val hostId: String?,
+    val host: String?,
+    /** Raw probe_evidence.type string (Good, ClientHello, ConnectionError, DataTimeout, etc.). */
+    val evidenceType: String?,
 )
 
 class ApiException(

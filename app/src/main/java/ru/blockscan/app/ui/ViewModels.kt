@@ -19,6 +19,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import ru.blockscan.app.AppContainer
 import ru.blockscan.app.core.Cidr
+import ru.blockscan.app.core.DomainParser
 import ru.blockscan.app.core.IpClassifier
 import ru.blockscan.app.core.IpParser
 import ru.blockscan.app.core.PlanResult
@@ -29,6 +30,7 @@ import ru.blockscan.app.data.ExportFormat
 import ru.blockscan.app.data.Exporter
 import ru.blockscan.app.data.RecordCodec
 import ru.blockscan.app.domain.*
+import java.util.Locale
 
 sealed interface ServiceState {
     data object Loading : ServiceState
@@ -42,9 +44,10 @@ enum class InputKind { EMPTY, IP, DOMAIN, CIDR, INVALID;
             val t = text.trim()
             return when {
                 t.isEmpty() -> EMPTY
-                t.contains('/') -> if (Cidr.parse(t) != null) CIDR else INVALID
+                t.contains('/') && Cidr.parse(t) != null -> CIDR
                 IpParser.parse(t) != null -> IP
                 ru.blockscan.app.core.DomainParser.canonical(t) != null -> DOMAIN
+                t.contains('/') -> INVALID
                 else -> INVALID
             }
         }
@@ -77,7 +80,8 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
 
 /** Живая проверка одного IP; переживает поворот экрана, результат пишется в историю. */
 class CheckViewModel(private val c: AppContainer, val target: String) : ViewModel() {
-    private val _record = MutableStateFlow(CheckRecord(target = target, startedAt = System.currentTimeMillis()))
+    private val normalizedTarget = DomainParser.canonical(target) ?: target.trim()
+    private val _record = MutableStateFlow(CheckRecord(target = normalizedTarget, startedAt = System.currentTimeMillis()))
     val record: StateFlow<CheckRecord> = _record.asStateFlow()
     private var job: Job? = null
     private var runId = 0L
@@ -90,18 +94,14 @@ class CheckViewModel(private val c: AppContainer, val target: String) : ViewMode
         val thisRun = ++runId
         job?.cancel()
         job = viewModelScope.launch {
-            var result = CheckRecord(target = target, startedAt = System.currentTimeMillis())
+            var result = CheckRecord(target = normalizedTarget, startedAt = System.currentTimeMillis())
             _record.value = result
             try {
                 val update: suspend (CheckRecord) -> Unit = { value ->
                     result = value
                     if (runId == thisRun) _record.value = value
                 }
-                result = if (ru.blockscan.app.core.DomainParser.canonical(target) != null) {
-                    c.checker.checkDomain(target, update)
-                } else {
-                    c.checker.check(target, update)
-                }
+                result = c.checker.check(normalizedTarget, update)
                 if (runId == thisRun) _record.value = result
             } finally {
                 if (runId == thisRun) withContext(NonCancellable + Dispatchers.IO) { c.db.addSingle(result) }
@@ -128,6 +128,9 @@ class RecordViewModel(private val c: AppContainer, private val src: RecordSource
 
 class HistoryViewModel(private val c: AppContainer) : ViewModel() {
     val entries: StateFlow<List<HistoryEntry>> = c.db.observe { c.db.list() }
+        .map { rows -> rows.distinctBy { row ->
+            if (row.kind == HistoryKind.SINGLE) "single:${row.target.lowercase(Locale.ROOT)}" else "scan:${row.id}"
+        } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 }
 
